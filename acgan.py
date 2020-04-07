@@ -2,6 +2,7 @@ import argparse
 import os
 import numpy as np
 import math
+import random
 
 import torchvision.transforms as transforms
 from torchvision.utils import save_image
@@ -33,6 +34,11 @@ print(opt)
 
 cuda = True if torch.cuda.is_available() else False
 
+gen_path = "saves/generator{}.pth"
+dis_path = "saves/discriminator{}.pth"
+
+torch.random.manual_seed(0x11223344)
+random.seed(0x11223344)
 
 def weights_init_normal(m):
     classname = m.__class__.__name__
@@ -58,6 +64,9 @@ class Generator(nn.Module):
             nn.Conv2d(128, 128, 3, stride=1, padding=1),
             nn.BatchNorm2d(128, 0.8),
             nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(128, 128, 3, stride=1, padding=1),
+            nn.BatchNorm2d(128, 0.8),
+            nn.LeakyReLU(0.2, inplace=True),
             nn.Upsample(scale_factor=2),
             nn.Conv2d(128, 64, 3, stride=1, padding=1),
             nn.BatchNorm2d(64, 0.8),
@@ -72,6 +81,9 @@ class Generator(nn.Module):
         out = out.view(out.shape[0], 128, self.init_size, self.init_size)
         img = self.conv_blocks(out)
         return img
+
+def randimg(model, label):
+    return model(torch.rand(opt.latent_dim), label)
 
 
 class Discriminator(nn.Module):
@@ -159,73 +171,84 @@ def sample_image(n_row, batches_done):
     gen_imgs = generator(z, labels)
     save_image(gen_imgs.data, "images/%d.png" % batches_done, nrow=n_row, normalize=True)
 
+def load_weights(path):
+    model = Generator()
+    model.load_state_dict(torch.load(path))
+    return model
+
+
 
 # ----------
 #  Training
 # ----------
 
-for epoch in range(opt.n_epochs):
-    for i, (imgs, labels) in enumerate(dataloader):
+if __name__ == "__main__":
 
-        batch_size = imgs.shape[0]
+    for epoch in range(opt.n_epochs):
+        for i, (imgs, labels) in enumerate(dataloader):
 
-        # Adversarial ground truths
-        valid = Variable(FloatTensor(batch_size, 1).fill_(1.0), requires_grad=False)
-        fake = Variable(FloatTensor(batch_size, 1).fill_(0.0), requires_grad=False)
+            batch_size = imgs.shape[0]
 
-        # Configure input
-        real_imgs = Variable(imgs.type(FloatTensor))
-        labels = Variable(labels.type(LongTensor))
+            # Adversarial ground truths
+            valid = Variable(FloatTensor(batch_size, 1).fill_(1.0), requires_grad=False)
+            fake = Variable(FloatTensor(batch_size, 1).fill_(0.0), requires_grad=False)
 
-        # -----------------
-        #  Train Generator
-        # -----------------
+            # Configure input
+            real_imgs = Variable(imgs.type(FloatTensor))
+            labels = Variable(labels.type(LongTensor))
 
-        optimizer_G.zero_grad()
+            # -----------------
+            #  Train Generator
+            # -----------------
 
-        # Sample noise and labels as generator input
-        z = Variable(FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim))))
-        gen_labels = Variable(LongTensor(np.random.randint(0, opt.n_classes, batch_size)))
+            optimizer_G.zero_grad()
 
-        # Generate a batch of images
-        gen_imgs = generator(z, gen_labels)
+            # Sample noise and labels as generator input
+            z = Variable(FloatTensor(np.random.normal(0, 1, (batch_size, opt.latent_dim))))
+            gen_labels = Variable(LongTensor(np.random.randint(0, opt.n_classes, batch_size)))
 
-        # Loss measures generator's ability to fool the discriminator
-        validity, pred_label = discriminator(gen_imgs)
-        g_loss = 0.5 * (adversarial_loss(validity, valid) + auxiliary_loss(pred_label, gen_labels))
+            # Generate a batch of images
+            gen_imgs = generator(z, gen_labels)
 
-        g_loss.backward()
-        optimizer_G.step()
+            # Loss measures generator's ability to fool the discriminator
+            validity, pred_label = discriminator(gen_imgs)
+            g_loss = 0.5 * (adversarial_loss(validity, valid) + auxiliary_loss(pred_label, gen_labels))
 
-        # ---------------------
-        #  Train Discriminator
-        # ---------------------
+            g_loss.backward()
+            optimizer_G.step()
 
-        optimizer_D.zero_grad()
+            # ---------------------
+            #  Train Discriminator
+            # ---------------------
 
-        # Loss for real images
-        real_pred, real_aux = discriminator(real_imgs)
-        d_real_loss = (adversarial_loss(real_pred, valid) + auxiliary_loss(real_aux, labels)) / 2
+            optimizer_D.zero_grad()
 
-        # Loss for fake images
-        fake_pred, fake_aux = discriminator(gen_imgs.detach())
-        d_fake_loss = (adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2
+            # Loss for real images
+            real_pred, real_aux = discriminator(real_imgs)
+            d_real_loss = (adversarial_loss(real_pred, valid) + auxiliary_loss(real_aux, labels)) / 2
 
-        # Total discriminator loss
-        d_loss = (d_real_loss + d_fake_loss) / 2
+            # Loss for fake images
+            fake_pred, fake_aux = discriminator(gen_imgs.detach())
+            d_fake_loss = (adversarial_loss(fake_pred, fake) + auxiliary_loss(fake_aux, gen_labels)) / 2
 
-        # Calculate discriminator accuracy
-        pred = np.concatenate([real_aux.data.cpu().numpy(), fake_aux.data.cpu().numpy()], axis=0)
-        gt = np.concatenate([labels.data.cpu().numpy(), gen_labels.data.cpu().numpy()], axis=0)
-        d_acc = np.mean(np.argmax(pred, axis=1) == gt)
+            # Total discriminator loss
+            d_loss = (d_real_loss + d_fake_loss) / 2
 
-        d_loss.backward()
-        optimizer_D.step()
+            # Calculate discriminator accuracy
+            pred = np.concatenate([real_aux.data.cpu().numpy(), fake_aux.data.cpu().numpy()], axis=0)
+            gt = np.concatenate([labels.data.cpu().numpy(), gen_labels.data.cpu().numpy()], axis=0)
+            d_acc = np.mean(np.argmax(pred, axis=1) == gt)
 
-        print(
-            "[Epoch %d/%d] [Batch %d/%d] [D loss: %f, acc: %d%%] [G loss: %f]"
-            % (epoch, opt.n_epochs, i, len(dataloader), d_loss.item(), 100 * d_acc, g_loss.item())
-        )
-        batches_done = epoch * len(dataloader) + i
-        if batches_done % opt.sample_interval == 0:
-            sample_image(n_row=10, batches_done=batches_done)
+            d_loss.backward()
+            optimizer_D.step()
+
+            print(
+                "[Epoch %d/%d] [Batch %d/%d] [D loss: %f, acc: %d%%] [G loss: %f]"
+                % (epoch, opt.n_epochs, i, len(dataloader), d_loss.item(), 100 * d_acc, g_loss.item())
+            )
+            batches_done = epoch * len(dataloader) + i
+            if batches_done % opt.sample_interval == 0:
+                sample_image(n_row=10, batches_done=batches_done)
+
+            torch.save(generator.state_dict(), gen_path.format(epoch))
+            torch.save(generator.state_dict(), dis_path.format(epoch))
