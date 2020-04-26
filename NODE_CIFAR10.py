@@ -32,9 +32,9 @@ import matplotlib.animation as animation
 import matplotlib as mpl
 import matplotlib.cm
 from IPython.display import HTML
-#print(torch.get_num_threads())
-#torch.set_num_threads(8)
-#print(torch.get_num_threads())
+print(torch.get_num_threads())
+torch.set_num_threads(8)
+print(torch.get_num_threads())
 #%%
 #  Set random seed for reproducibility
 manualSeed = 375
@@ -415,7 +415,7 @@ if retrain_model:
     retrain_model = False
 
 #%%
-torch.save(CNNODE.state_dict(), "CNNODE%.pth" %(n_epochs))
+torch.save(CNNODE.state_dict(), "CNNODE20.pth")
 
 #%%                
 plt.figure(figsize=(10,5))
