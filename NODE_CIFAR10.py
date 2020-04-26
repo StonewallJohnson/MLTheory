@@ -32,9 +32,9 @@ import matplotlib.animation as animation
 import matplotlib as mpl
 import matplotlib.cm
 from IPython.display import HTML
-print(torch.get_num_threads())
-torch.set_num_threads(8)
-print(torch.get_num_threads())
+#print(torch.get_num_threads())
+#torch.set_num_threads(8)
+#print(torch.get_num_threads())
 #%%
 #  Set random seed for reproducibility
 manualSeed = 375
