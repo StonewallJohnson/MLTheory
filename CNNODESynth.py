@@ -56,7 +56,7 @@ torch.set_num_threads(8)
 print(torch.get_num_threads())
 #%%
 #  Set random seed for reproducibility
-manualSeed = 376
+manualSeed = 375
 print("Random Seed: ", manualSeed)
 random.seed(manualSeed)
 torch.manual_seed(manualSeed)
@@ -380,17 +380,33 @@ if retrain_model:
             tqdm(enumerate(test_loader_real1),total=len(test_loader_real1)):
             with torch.no_grad():
                 dataSynth = acgan.randimg(gen, target)
+                trans = transforms.Compose([transforms.ToTensor(),
+                                            transforms.Normalize(
+                                                (0.4914,0.4822,0.4465),
+                                          (0.2023,0.1994,0.2010))])
+                dataSynthTransforms = []
+                for i in range(len(dataSynth)):
+                    x = dataSynth[i]
+                    z = x * torch.tensor([.5,.5,.5]).view(3, 1, 1)
+                    z = z + torch.tensor([.5,.5,.5]).view(3, 1, 1)
+                    img = transforms.ToPILImage(mode="RGB")(z)
+                    tensor = trans(img)
+                    dataSynthTransforms.append(tensor)
+                dataSynthTransforms = torch.stack(dataSynthTransforms)
+                
+
+
             if use_cuda:
                 data = data.cuda()
                 target = target.cuda()
-                dataSynth = dataSynth.cuda()
+                dataSynthTransforms = dataSynth.cuda()
             optimizer.zero_grad()
             CNNODESynth.zero_grad()
-            output = CNNODESynth(dataSynth)
+            output = CNNODESynth(dataSynthTransforms)
             err = criterion(output, target)
             err.backward()
             optimizer.step()
-            num_items_training += dataSynth.shape[0]
+            num_items_training += dataSynthTransforms.shape[0]
             train_epoch_accuracy += \
                 torch.sum(torch.argmax(output, dim=1) == target).item()
             train_accuracy.append(train_epoch_accuracy / num_items_training)
