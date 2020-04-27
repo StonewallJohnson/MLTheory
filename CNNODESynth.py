@@ -378,7 +378,8 @@ if retrain_model:
         batch_index = 0
         for batch_idx, (data, target) in \
             tqdm(enumerate(test_loader_real1),total=len(test_loader_real1)):
-            dataSynth = acgan.randimg(gen, target)
+            with torch.no_grad():
+                dataSynth = acgan.randimg(gen, target)
             if use_cuda:
                 data = data.cuda()
                 target = target.cuda()
@@ -450,7 +451,7 @@ if retrain_model:
                   )
     retrain_model = False
 #%%
-torch.save(CNNODESynth.state_dict(), "CNNODESynth%.pth" %(n_epochs))
+torch.save(CNNODESynth.state_dict(), "CNNODESynth%d.pth" %(n_epochs))
 
 #%%                
 plt.figure(figsize=(10,5))

@@ -415,7 +415,7 @@ if retrain_model:
     retrain_model = False
 
 #%%
-torch.save(CNNODE.state_dict(), "CNNODE20.pth")
+torch.save(CNNODE.state_dict(), "CNNODE%d.pth"%(n_epochs))
 
 #%%                
 plt.figure(figsize=(10,5))
