@@ -1,46 +1,39 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sun Apr 12 03:06:54 2020
+Created on Sat Apr 25 15:16:15 2020
 
 @author: jv204
 """
 #%%
 from __future__ import print_function
-import argparse
-import os
 import random
 import math
-from IPython.display import clear_output
 
 from tqdm.notebook import tqdm
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
-import torch.optim as optim
-from torch.autograd import Variable
 
 import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
-import torchvision.utils as vutils
 import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import matplotlib as mpl
-import matplotlib.cm
-from IPython.display import HTML
-print(torch.get_num_threads())
-torch.set_num_threads(8)
-print(torch.get_num_threads())
+
+import acgan21
+#print(torch.get_num_threads())
+#torch.set_num_threads(8)
+#print(torch.get_num_threads())
 #%%
 #  Set random seed for reproducibility
 manualSeed = 375
 print("Random Seed: ", manualSeed)
 random.seed(manualSeed)
 torch.manual_seed(manualSeed)
+#%%
+ngpu = 4
+device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 #%%
 # @dingdonged
 use_cuda = torch.cuda.is_available()
@@ -312,36 +305,39 @@ class ContinuousNeuralCIFAR10Classifier(nn.Module):
         x = x.view(-1, shape)
         out = self.fc(x)
         return out
-
 #%%
 func = ConvODEF(64)
 ode = NeuralODE(func)
-CNNODE = ContinuousNeuralCIFAR10Classifier(ode)
+CNNODESynth = ContinuousNeuralCIFAR10Classifier(ode)
+gen = acgan21.load_weights("generator6803.pth")
+if torch.cuda.device_count() > 1:
+    CNNODESynth = nn.DataParallel(CNNODESynth)
 if use_cuda:
-    CNNODE = CNNODE.cuda()
+    CNNODESynth.cuda()
 #%%
 batch_size = 96
-train_loader_real = torch.utils.data.DataLoader(
+test_loader_real1 = torch.utils.data.DataLoader(
     dset.CIFAR10("data/cifar10", train=True, download=True,
                  transform=transforms.Compose([
                      transforms.ToTensor(),
-                     transforms.Normalize((0.4914, 0.4822, 0.4465), 
-                                          (0.2023, 0.1994, 0.2010))])), 
+                     transforms.Normalize((0.4914,0.4822,0.4465),
+                                          (0.2023,0.1994,0.2010))])), 
     batch_size=batch_size, shuffle=True)
-test_loader_real = torch.utils.data.DataLoader(
+test_loader_real2 = torch.utils.data.DataLoader(
     dset.CIFAR10("data/cifar10", train=False, download=True,
                  transform=transforms.Compose([
                      transforms.ToTensor(),
-                     transforms.Normalize((0.4914, 0.4822, 0.4465),
-                                          (0.2023, 0.1994, 0.2010))])),
+                     transforms.Normalize((0.4914,0.4822,0.4465),
+                                          (0.2023,0.1994,0.2010))])),
     batch_size=128, shuffle=True)
 #%%
-optimizer = torch.optim.Adam(CNNODE.parameters())
+optimizer = torch.optim.Adam(CNNODESynth.parameters())
 #%%
-n_epochs = 20
+n_epochs = 30
 #  @jv204 or @JWolff98
 retrain_model = input("Do you want to train a new model [True/False]: ")
 if retrain_model:
+    #  Training
     train_losses = []
     train_iters = 0
     train_accuracy = []
@@ -349,53 +345,72 @@ if retrain_model:
     validation_iters = 0
     validation_accuracy = []
     for epoch in range(1, n_epochs + 1):
-        #  Training
         num_items_training = 0
         train_epoch_losses = []
         train_epoch_accuracy = 0.0
-        CNNODE.train()
+        CNNODESynth.train()
         criterion = nn.CrossEntropyLoss()
         print(f"Training Epoch {epoch}...")
+        batch_index = 0
         for batch_idx, (data, target) in \
-            tqdm(enumerate(train_loader_real),total=len(train_loader_real)):
+            tqdm(enumerate(test_loader_real1),total=len(test_loader_real1)):
+            with torch.no_grad():
+                labels = torch.tensor([random.randint(0,9) \
+                                       for elements in range(len(target))])
+                dataSynth = acgan21.randimg(gen, labels)
+                trans = transforms.Compose([transforms.ToTensor(),
+                                            transforms.Normalize(
+                                                (0.4914,0.4822,0.4465),
+                                          (0.2023,0.1994,0.2010))])
+                dataSynthTransforms = []
+                for i in range(len(target)):
+                    x = dataSynth[i]
+                    z = x * torch.tensor([.5,.5,.5]).view(3, 1, 1)
+                    z = z + torch.tensor([.5,.5,.5]).view(3, 1, 1)
+                    img = transforms.ToPILImage(mode="RGB")(z)
+                    tensor = trans(img)
+                    dataSynthTransforms.append(tensor)
+                dataSynthTransforms = torch.stack(dataSynthTransforms)
+                
+
+
             if use_cuda:
                 data = data.cuda()
-                target = target.cuda()
-            
+                labels = labels.cuda()
+                dataSynthTransforms = dataSynthTransforms.cuda()
             optimizer.zero_grad()
-            CNNODE.zero_grad()
-            output = CNNODE(data)
-            err = criterion(output, target)
+            CNNODESynth.zero_grad()
+            output = CNNODESynth(dataSynthTransforms)
+            err = criterion(output, labels)
             err.backward()
             optimizer.step()
-            num_items_training += data.shape[0]
+            num_items_training += dataSynthTransforms.shape[0]
             train_epoch_accuracy += \
-                torch.sum(torch.argmax(output, dim=1) == target).item()
+                torch.sum(torch.argmax(output, dim=1) == labels).item()
             train_accuracy.append(train_epoch_accuracy / num_items_training)
             if batch_idx % 20 == 0:
                  print('[%d/%d][%d/%d]\tLoss: %.4f'
-                  % (epoch, n_epochs, batch_idx, len(train_loader_real),
+                  % (epoch, n_epochs, batch_idx, len(test_loader_real1),
                      err.item()))
             train_losses.append(err.item())
             train_epoch_losses.append(err.item())
             train_iters += 1
         print("Train loss: {:.5f}%".format(np.mean(train_epoch_losses)))
         print()
-        
-        # Validation
+        #  Validation   
         validation_epoch_accuracy = 0.0
         num_items_validation = 0
         validation_epoch_losses = []
-        CNNODE.eval()
+        CNNODESynth.eval()
         criterion = nn.CrossEntropyLoss()
         print(f"Testing...")
         with torch.no_grad():
-            for batch_idx, (data, target) in tqdm(enumerate(test_loader_real),
-                                                  total=len(test_loader_real)):
+            for batch_idx, (data, target) in tqdm(enumerate(test_loader_real1),
+                                                 total=len(test_loader_real1)):
                 if use_cuda:
                     data = data.cuda()
                     target = target.cuda()
-                output = CNNODE(data)
+                output = CNNODESynth(data)
                 loss = criterion(output, target)
                 validation_losses.append(loss.item())
                 validation_epoch_losses.append(loss.item())
@@ -405,6 +420,22 @@ if retrain_model:
                 validation_accuracy.append((validation_epoch_accuracy)/\
                                            num_items_validation)
                 validation_iters += 1
+            for batch_idx, (data, target) in tqdm(enumerate(test_loader_real2),
+                                                 total=len(test_loader_real2)):
+                if use_cuda:
+                    data = data.cuda()
+                    target = target.cuda()
+                output = CNNODESynth(data)
+                loss = criterion(output, target)
+                validation_losses.append(loss.item())
+                validation_epoch_losses.append(loss.item())
+                validation_epoch_accuracy += \
+                    torch.sum(torch.argmax(output,dim=1) == target).item()
+                num_items_validation += data.shape[0]
+                validation_accuracy.append((validation_epoch_accuracy)/\
+                                           num_items_validation)
+                validation_iters += 1
+                    
             print(
             "Validation loss: {:.5f}%".format(np.mean(validation_epoch_losses))
                   )
@@ -413,13 +444,12 @@ if retrain_model:
                                                    * 100)/num_items_validation)
                   )
     retrain_model = False
-
 #%%
-torch.save(CNNODE.state_dict(), "CNNODE%d.pth"%(n_epochs))
+torch.save(CNNODESynth.state_dict(), "CNNODESynth%d.pth" %(n_epochs))
 
 #%%                
 plt.figure(figsize=(10,5))
-plt.title("CNNODE Loss During Training")
+plt.title("CNNODESynth Loss During Training")
 plt.plot(train_losses,label="Training Loss", color ='green')
 plt.xlabel("Iterations")
 plt.ylabel("Loss")
@@ -428,7 +458,7 @@ plt.show()
 
 #%%
 plt.figure(figsize=(10,5))
-plt.title("CNNODE Accuracy During Training")
+plt.title("CNNODESynth Accuracy During Training")
 plt.plot(train_accuracy,label="Training Accuraccy")
 plt.xlabel("Iterations")
 plt.ylabel("Accuracy")
@@ -437,7 +467,7 @@ plt.show()
 
 #%%
 plt.figure(figsize=(10,5))
-plt.title("CNNODE Loss During Validation")
+plt.title("CNNODESynth Loss During Validation")
 plt.plot(validation_losses,label="Validation Loss", color='yellow')
 plt.xlabel("Iterations")
 plt.ylabel("Loss")
@@ -446,7 +476,7 @@ plt.show()
 
 #%%
 plt.figure(figsize=(10,5))
-plt.title("CNNODE Accuracy During Validation")
+plt.title("CNNODESynth Accuracy During Validation")
 plt.plot(validation_accuracy,label="Validation Accuracy", color='red')
 plt.xlabel("iterations")
 plt.ylabel("Accuracy")
@@ -455,9 +485,5 @@ plt.show()
 
 
 
-            
-        
-                     
-        
-                
-    
+
+
