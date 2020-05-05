@@ -6,60 +6,34 @@ Created on Sat Apr 25 15:16:15 2020
 """
 #%%
 from __future__ import print_function
-import argparse
-import os
 import random
 import math
-from IPython.display import clear_output
 
 from tqdm.notebook import tqdm
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
-import torch.optim as optim
-from torch.autograd import Variable
 
 import torch.utils.data
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
-import torchvision.utils as vutils
 import numpy as np
-import seaborn as sns
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-import matplotlib as mpl
-import matplotlib.cm
-from IPython.display import HTML
 
-import acgan
-class UnNormalize(object):
-    def __init__(self, mean, std):
-        self.mean = mean
-        self.std = std
-
-    def __call__(self, tensor):
-        """
-        Args:
-            tensor (Tensor): Tensor image of size (C, H, W) to be normalized.
-        Returns:
-            Tensor: Normalized image.
-        """
-        for t, m, s in zip(tensor, self.mean, self.std):
-            t.mul_(s).add_(m)
-            # The normalize code -> t.sub_(m).div_(s)
-        return tensor
-unorm = UnNormalize(mean=([0.5]), std=([0.5]))
-print(torch.get_num_threads())
-torch.set_num_threads(8)
-print(torch.get_num_threads())
+import acgan21
+#print(torch.get_num_threads())
+#torch.set_num_threads(8)
+#print(torch.get_num_threads())
 #%%
 #  Set random seed for reproducibility
 manualSeed = 375
 print("Random Seed: ", manualSeed)
 random.seed(manualSeed)
 torch.manual_seed(manualSeed)
+#%%
+ngpu = 4
+device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 #%%
 # @dingdonged
 use_cuda = torch.cuda.is_available()
@@ -335,9 +309,11 @@ class ContinuousNeuralCIFAR10Classifier(nn.Module):
 func = ConvODEF(64)
 ode = NeuralODE(func)
 CNNODESynth = ContinuousNeuralCIFAR10Classifier(ode)
-gen = acgan.load_weights("generator999.pth")
+gen = acgan21.load_weights("generator6803.pth")
+if torch.cuda.device_count() > 1:
+    CNNODESynth = nn.DataParallel(CNNODESynth)
 if use_cuda:
-    CNNODESynth = CNNODESynth.cuda()
+    CNNODESynth.cuda()
 #%%
 batch_size = 96
 test_loader_real1 = torch.utils.data.DataLoader(
@@ -357,7 +333,7 @@ test_loader_real2 = torch.utils.data.DataLoader(
 #%%
 optimizer = torch.optim.Adam(CNNODESynth.parameters())
 #%%
-n_epochs = 20
+n_epochs = 30
 #  @jv204 or @JWolff98
 retrain_model = input("Do you want to train a new model [True/False]: ")
 if retrain_model:
@@ -379,13 +355,15 @@ if retrain_model:
         for batch_idx, (data, target) in \
             tqdm(enumerate(test_loader_real1),total=len(test_loader_real1)):
             with torch.no_grad():
-                dataSynth = acgan.randimg(gen, target)
+                labels = torch.tensor([random.randint(0,9) \
+                                       for elements in range(len(target))])
+                dataSynth = acgan21.randimg(gen, labels)
                 trans = transforms.Compose([transforms.ToTensor(),
                                             transforms.Normalize(
                                                 (0.4914,0.4822,0.4465),
                                           (0.2023,0.1994,0.2010))])
                 dataSynthTransforms = []
-                for i in range(len(dataSynth)):
+                for i in range(len(target)):
                     x = dataSynth[i]
                     z = x * torch.tensor([.5,.5,.5]).view(3, 1, 1)
                     z = z + torch.tensor([.5,.5,.5]).view(3, 1, 1)
@@ -398,17 +376,17 @@ if retrain_model:
 
             if use_cuda:
                 data = data.cuda()
-                target = target.cuda()
-                dataSynthTransforms = dataSynth.cuda()
+                labels = labels.cuda()
+                dataSynthTransforms = dataSynthTransforms.cuda()
             optimizer.zero_grad()
             CNNODESynth.zero_grad()
             output = CNNODESynth(dataSynthTransforms)
-            err = criterion(output, target)
+            err = criterion(output, labels)
             err.backward()
             optimizer.step()
             num_items_training += dataSynthTransforms.shape[0]
             train_epoch_accuracy += \
-                torch.sum(torch.argmax(output, dim=1) == target).item()
+                torch.sum(torch.argmax(output, dim=1) == labels).item()
             train_accuracy.append(train_epoch_accuracy / num_items_training)
             if batch_idx % 20 == 0:
                  print('[%d/%d][%d/%d]\tLoss: %.4f'
