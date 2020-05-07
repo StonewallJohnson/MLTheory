@@ -18,6 +18,8 @@ os.makedirs("images", exist_ok=True)
 gen_path = "saves/generator{}.pth"
 dis_path = "saves/discriminator{}.pth"
 
+# This options class replaces the options parameters present in the original
+# version. This allows acgan to be used as a module.
 class Options:
     def __init__(self):
         self.n_epochs=3000
@@ -123,8 +125,8 @@ adversarial_loss = torch.nn.BCELoss()
 auxiliary_loss = torch.nn.CrossEntropyLoss()
 
 # Initialize generator and discriminator
-generator = Generator()
-discriminator = Discriminator()
+generator = nn.DataParallel(Generator())
+discriminator = nn.DataParallel(Discriminator())
 
 if cuda:
     generator.cuda()
@@ -250,5 +252,6 @@ if __name__ == "__main__":
             if batches_done % opt.sample_interval == 0:
                 sample_image(n_row=10, batches_done=batches_done)
 
+            # Save weights
             torch.save(generator.state_dict(), gen_path.format(epoch))
             torch.save(generator.state_dict(), dis_path.format(epoch))
