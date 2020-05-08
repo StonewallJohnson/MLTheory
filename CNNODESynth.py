@@ -31,10 +31,10 @@ manualSeed = 375
 print("Random Seed: ", manualSeed)
 random.seed(manualSeed)
 torch.manual_seed(manualSeed)
+
 #%%
-ngpu = 4
-device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
-#%%
+
+#  The Code defining the CNNODESynth model
 # @dingdonged
 use_cuda = torch.cuda.is_available()
 def matplotlib_imshow(img, one_channel=False):
@@ -306,15 +306,21 @@ class ContinuousNeuralCIFAR10Classifier(nn.Module):
         out = self.fc(x)
         return out
 #%%
+
+#  Defining the model CNNODESynth and loading in
+#  the generator from Nihal's acgan21.py
+
 func = ConvODEF(64)
 ode = NeuralODE(func)
 CNNODESynth = ContinuousNeuralCIFAR10Classifier(ode)
 gen = acgan21.load_weights("generator6803.pth")
-if torch.cuda.device_count() > 1:
-    CNNODESynth = nn.DataParallel(CNNODESynth)
 if use_cuda:
     CNNODESynth.cuda()
 #%%
+
+#  Creating two test-loaders to use as the validation set
+#  This uses the entirety of the CIFAR-10 dataset
+
 batch_size = 96
 test_loader_real1 = torch.utils.data.DataLoader(
     dset.CIFAR10("data/cifar10", train=True, download=True,
@@ -331,37 +337,74 @@ test_loader_real2 = torch.utils.data.DataLoader(
                                           (0.2023,0.1994,0.2010))])),
     batch_size=128, shuffle=True)
 #%%
+
+#  Defining the optimizer as the adam optimizer
+
 optimizer = torch.optim.Adam(CNNODESynth.parameters())
 #%%
-n_epochs = 30
 #  @jv204 or @JWolff98
+#  The Training and validation loops
+
 retrain_model = input("Do you want to train a new model [True/False]: ")
 if retrain_model:
-    #  Training
+    n_epochs = int(input("How many epochs: "))
+
+if retrain_model:
+    
+    #  Training Loop
+    #  Creating empty lists and integers to save data from the training 
+    #  process
+    
     train_losses = []
     train_iters = 0
     train_accuracy = []
     validation_losses = []
     validation_iters = 0
     validation_accuracy = []
+    
+    #  Looping for the number of epochs
     for epoch in range(1, n_epochs + 1):
+        
+        #  Creating empty lists and integers to save information per epoch
+        
         num_items_training = 0
         train_epoch_losses = []
         train_epoch_accuracy = 0.0
         CNNODESynth.train()
+        
+        #  Cross-Entropy is the loss
+        
         criterion = nn.CrossEntropyLoss()
+        
+        #  Indicating the start of the Training loop
+        
         print(f"Training Epoch {epoch}...")
-        batch_index = 0
+        
+        #  Using the first testLoader to create batches of images from the generator
+        
         for batch_idx, (data, target) in \
             tqdm(enumerate(test_loader_real1),total=len(test_loader_real1)):
             with torch.no_grad():
+                
+                #  Creating a labels tensor with a list comprehension to simulate
+                #  evenly distributed data
+                
                 labels = torch.tensor([random.randint(0,9) \
                                        for elements in range(len(target))])
+                    
+                #  Generating synthetic data using the randomized tensors
+                
                 dataSynth = acgan21.randimg(gen, labels)
+                
+                #  Defining the proper transformations for the CNNODESynth
+                
                 trans = transforms.Compose([transforms.ToTensor(),
                                             transforms.Normalize(
                                                 (0.4914,0.4822,0.4465),
                                           (0.2023,0.1994,0.2010))])
+                #  Unormalizing the generated images fromthe generator and 
+                #  renormalizing them to be pushed into the model
+                
                 dataSynthTransforms = []
                 for i in range(len(target)):
                     x = dataSynth[i]
@@ -375,19 +418,30 @@ if retrain_model:
 
 
             if use_cuda:
-                data = data.cuda()
                 labels = labels.cuda()
                 dataSynthTransforms = dataSynthTransforms.cuda()
             optimizer.zero_grad()
             CNNODESynth.zero_grad()
+            
+            #  Predicting classes for the synthetic data
+            
             output = CNNODESynth(dataSynthTransforms)
+            
+            #  Calculating loss from the synthetic data
+            
             err = criterion(output, labels)
             err.backward()
             optimizer.step()
+            
+            #  Incrementing and appending the loss and accuracy data
+            
             num_items_training += dataSynthTransforms.shape[0]
             train_epoch_accuracy += \
                 torch.sum(torch.argmax(output, dim=1) == labels).item()
             train_accuracy.append(train_epoch_accuracy / num_items_training)
+            
+            #  Every 20 batches return loss data
+            
             if batch_idx % 20 == 0:
                  print('[%d/%d][%d/%d]\tLoss: %.4f'
                   % (epoch, n_epochs, batch_idx, len(test_loader_real1),
@@ -395,16 +449,27 @@ if retrain_model:
             train_losses.append(err.item())
             train_epoch_losses.append(err.item())
             train_iters += 1
+            
+        #  Return the loss for the previous epoch
+        
         print("Train loss: {:.5f}%".format(np.mean(train_epoch_losses)))
         print()
-        #  Validation   
+        #  Validation Loop
+        #  Creating some empty lists and values to record information
+        
         validation_epoch_accuracy = 0.0
         num_items_validation = 0
         validation_epoch_losses = []
         CNNODESynth.eval()
         criterion = nn.CrossEntropyLoss()
+        
+        #  Indicating the beginning of the validation loop
+        
         print(f"Testing...")
         with torch.no_grad():
+            
+            #  Validating though the entirety of the CIFAR-10 Dataset
+            
             for batch_idx, (data, target) in tqdm(enumerate(test_loader_real1),
                                                  total=len(test_loader_real1)):
                 if use_cuda:
@@ -435,7 +500,8 @@ if retrain_model:
                 validation_accuracy.append((validation_epoch_accuracy)/\
                                            num_items_validation)
                 validation_iters += 1
-                    
+            #  Return the loss and accuracy per validation epoch
+            
             print(
             "Validation loss: {:.5f}%".format(np.mean(validation_epoch_losses))
                   )
@@ -445,9 +511,12 @@ if retrain_model:
                   )
     retrain_model = False
 #%%
+#  Saving the model
+
 torch.save(CNNODESynth.state_dict(), "CNNODESynth%d.pth" %(n_epochs))
 
-#%%                
+#%%    
+#  Plotting the Loss during training            
 plt.figure(figsize=(10,5))
 plt.title("CNNODESynth Loss During Training")
 plt.plot(train_losses,label="Training Loss", color ='green')
@@ -457,6 +526,7 @@ plt.legend()
 plt.show()
 
 #%%
+#  Plotting the Accuracy during training
 plt.figure(figsize=(10,5))
 plt.title("CNNODESynth Accuracy During Training")
 plt.plot(train_accuracy,label="Training Accuraccy")
@@ -466,6 +536,7 @@ plt.legend()
 plt.show()
 
 #%%
+#  Plotting the Loss during Validation
 plt.figure(figsize=(10,5))
 plt.title("CNNODESynth Loss During Validation")
 plt.plot(validation_losses,label="Validation Loss", color='yellow')
@@ -475,6 +546,7 @@ plt.legend()
 plt.show()
 
 #%%
+#  Plotting the Accuracy during Validation
 plt.figure(figsize=(10,5))
 plt.title("CNNODESynth Accuracy During Validation")
 plt.plot(validation_accuracy,label="Validation Accuracy", color='red')
