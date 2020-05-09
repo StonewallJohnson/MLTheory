@@ -5,6 +5,8 @@ Created on Sun Apr 12 03:06:54 2020
 @author: jv204
 """
 #%%
+
+# Importing modules.
 from __future__ import print_function
 import argparse
 import os
@@ -32,16 +34,21 @@ import matplotlib.animation as animation
 import matplotlib as mpl
 import matplotlib.cm
 from IPython.display import HTML
+
+# Changing the number of threads that pyTorch uses with its models
 print(torch.get_num_threads())
 torch.set_num_threads(8)
 print(torch.get_num_threads())
 #%%
-#  Set random seed for reproducibility
+# Set random seed for reproducibility
 manualSeed = 375
 print("Random Seed: ", manualSeed)
 random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 #%%
+
+# Defining the CNN with the NODE backend
+
 # @dingdonged
 use_cuda = torch.cuda.is_available()
 def matplotlib_imshow(img, one_channel=False):
@@ -314,12 +321,18 @@ class ContinuousNeuralCIFAR10Classifier(nn.Module):
         return out
 
 #%%
+
+#  Setting up the Neural Network
+
 func = ConvODEF(64)
 ode = NeuralODE(func)
 CNNODE = ContinuousNeuralCIFAR10Classifier(ode)
 if use_cuda:
     CNNODE = CNNODE.cuda()
 #%%
+
+#  defining the training set and validation set for the CNNODE
+
 batch_size = 96
 train_loader_real = torch.utils.data.DataLoader(
     dset.CIFAR10("data/cifar10", train=True, download=True,
@@ -336,53 +349,111 @@ test_loader_real = torch.utils.data.DataLoader(
                                           (0.2023, 0.1994, 0.2010))])),
     batch_size=128, shuffle=True)
 #%%
+
+#  Utilizing the Adam Optimizer
+
 optimizer = torch.optim.Adam(CNNODE.parameters())
 #%%
-n_epochs = 20
+#
 #  @jv204 or @JWolff98
+
+#  Defining how long you want to train this model
 retrain_model = input("Do you want to train a new model [True/False]: ")
 if retrain_model:
+    n_epochs = int(input("How many epochs do you want for training and validation: "))
+
+if retrain_model:
+    
+    #  Creating a few empty lists and integers for evaluation of the training of the model
+    
     train_losses = []
     train_iters = 0
     train_accuracy = []
     validation_losses = []
     validation_iters = 0
     validation_accuracy = []
+    
+    #  Using a for loop to go through each epoch
+    
     for epoch in range(1, n_epochs + 1):
-        #  Training
+        #  Training loop
         num_items_training = 0
         train_epoch_losses = []
         train_epoch_accuracy = 0.0
+        
+        #  Putting the model into training mode
+        
         CNNODE.train()
+        
+        # Defining the loss as a crossEntropyLoss
+        
         criterion = nn.CrossEntropyLoss()
+        
+        #  Indicating the start of the training loop
+        
         print(f"Training Epoch {epoch}...")
+        
+        #  Loading in batches of 96 images with their classifications at a time for about 
+        #  90% of CIFAR-10  dataset as the training set
+        
         for batch_idx, (data, target) in \
             tqdm(enumerate(train_loader_real),total=len(train_loader_real)):
+                
             if use_cuda:
                 data = data.cuda()
                 target = target.cuda()
-            
             optimizer.zero_grad()
             CNNODE.zero_grad()
+            
+            #  Having he CNNODE try to predict the class of image
+            
             output = CNNODE(data)
+            
+            #  Calculating the loss between the guess and the actual class
+            
             err = criterion(output, target)
+            
+            #  backpropagating
+            
             err.backward()
+            
+            #  Taking a step with the optimizer
+            
             optimizer.step()
+            
+            #  Incrementing the num of items being trained, along with adding 
+            #  an accuracy per item
+            #  Saving the average accuracy per batch, and appending it to the
+            #  training accuracy.
+            
             num_items_training += data.shape[0]
             train_epoch_accuracy += \
                 torch.sum(torch.argmax(output, dim=1) == target).item()
             train_accuracy.append(train_epoch_accuracy / num_items_training)
+            
+            #  Every 20 batches, the current loss for that batch is given
+            #  as an indication.
+            
             if batch_idx % 20 == 0:
                  print('[%d/%d][%d/%d]\tLoss: %.4f'
                   % (epoch, n_epochs, batch_idx, len(train_loader_real),
                      err.item()))
+            #  Appending the loss per item and incrementing the number of 
+            #  iterations
+            
             train_losses.append(err.item())
             train_epoch_losses.append(err.item())
             train_iters += 1
+            
+        #  Indicating the loss of the previous epoch
+        
         print("Train loss: {:.5f}%".format(np.mean(train_epoch_losses)))
         print()
         
-        # Validation
+        # Validation Loop
+        #  Similar set up to the training loop except that the 
+        #  model is being evaluated on ten percent of CIFAR-10 dataset
+        
         validation_epoch_accuracy = 0.0
         num_items_validation = 0
         validation_epoch_losses = []
@@ -415,9 +486,14 @@ if retrain_model:
     retrain_model = False
 
 #%%
+
+#  Saving the current model
+
 torch.save(CNNODE.state_dict(), "CNNODE%d.pth"%(n_epochs))
 
-#%%                
+#%%      
+#  Plotting the loss during training
+          
 plt.figure(figsize=(10,5))
 plt.title("CNNODE Loss During Training")
 plt.plot(train_losses,label="Training Loss", color ='green')
@@ -427,6 +503,8 @@ plt.legend()
 plt.show()
 
 #%%
+#  Plotting the Accuracy during training
+
 plt.figure(figsize=(10,5))
 plt.title("CNNODE Accuracy During Training")
 plt.plot(train_accuracy,label="Training Accuraccy")
@@ -436,6 +514,9 @@ plt.legend()
 plt.show()
 
 #%%
+
+#  Plotting the Loss during Validation
+
 plt.figure(figsize=(10,5))
 plt.title("CNNODE Loss During Validation")
 plt.plot(validation_losses,label="Validation Loss", color='yellow')
@@ -445,6 +526,8 @@ plt.legend()
 plt.show()
 
 #%%
+
+#  Plotting the Accuracy during Validation
 plt.figure(figsize=(10,5))
 plt.title("CNNODE Accuracy During Validation")
 plt.plot(validation_accuracy,label="Validation Accuracy", color='red')
